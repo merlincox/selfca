@@ -127,6 +127,8 @@ subjectAltName = @alt_names
 [alt_names]
 EOF
 
+# 6 add the domains to the extensions file
+
 let entry=1
 for domain in $domains ; do
 
@@ -134,12 +136,15 @@ for domain in $domains ; do
     let entry++
 done
 
-# 5 make the SERVER cert
+# 7 make the SERVER cert
 
 openssl x509 -req -in $server.csr -CA $ca.pem -CAkey $ca.key -CAcreateserial \
              -out $server.cert -days $days -sha256 -extfile $server.ext
 
-echo $server.key is the server key
-echo $server.cert is the server cert
+echo ============================================================
+echo $server.key is the server key to be used in the server
+echo $server.cert is the server cert to be used in the server
 echo $ca.pem is the CA authority to be used in the browser, etc
+echo ============================================================
+echo For development purposes, $ca.key and $server.srl can be ignored
 
