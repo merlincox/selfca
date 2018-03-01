@@ -2,20 +2,23 @@
 
 set -e
 
-ca=my_ca
-server=my_server
+ca=selfca_ca
+server=selfca_server
 domains=""
-main_domain=""
+common_name=""
 overwrite=0
 days=3650
+org="Self CA"
 
 usage()
 {
    echo "Usage:"
-   echo "   $0 ( --domain | -d ) <domain> [ ( -domain | -d ) <domain2> ]..."
-   echo "      [ ( --server | -s ) <server_key_base_name> {default:my_server} ]"
-   echo "      [ ( --ca | -c ) <CA_key_base_name> {default:my_ca}]"
-   echo "      [ ( --overwrite | -o)"
+   echo "   $0  -d <domain1> [ -d <domain2> ]..."
+   echo "      [ -s <server_key_base_name> {default:selfca_server} ]"
+   echo "      [ -ca <CA_key_base_name> {default:selfca_ca} ]"
+   echo "      [ -cn <common_name> {default:Self CA for domain1...} ]"
+   echo "      [ -o <organisation_name> {default:Self CA} ]"
+   echo "      [ --overwrite ]"
    echo "      [ --days <days_to_expiry> {default:3650}]"
 }
 
@@ -23,7 +26,27 @@ while [ $# -gt 0 ] ; do
 
    case "$1" in
 
-      "--ca" | "-c" )
+      "-cn" )
+
+          shift
+          if [ $# -eq 0 ]; then
+             usage
+             exit 1
+          fi
+          common_name=$1
+          ;;
+
+      "-o" )
+
+          shift
+          if [ $# -eq 0 ]; then
+             usage
+             exit 1
+          fi
+          org=$1
+          ;;
+
+      "-ca" )
 
           shift
           if [ $# -eq 0 ]; then
@@ -33,7 +56,7 @@ while [ $# -gt 0 ] ; do
           ca=$1
           ;;
 
-      "--server" | "-s" )
+      "-s" )
 
           shift
           if [ $# -eq 0 ]; then
@@ -43,15 +66,12 @@ while [ $# -gt 0 ] ; do
           server=$1
           ;;
 
-       "--domain" | "-d" )
+       "-d" )
 
           shift
           if [ $# -eq 0 ]; then
              usage
              exit 1
-          fi
-          if [ -z "$main_domain" ]; then
-              main_domain="$1"
           fi
           domains="$domains $1"
           ;;
@@ -66,11 +86,10 @@ while [ $# -gt 0 ] ; do
           days=$1
           ;;
 
-       "--overwrite" | "-o" )
+       "--overwrite" )
 
           overwrite=1
           ;;
-
 
         * )
 
@@ -90,7 +109,7 @@ if [ -z "$domains" ]; then
 fi
 
 if [ $overwrite -eq 0 ] ; then
-    for file in $ca.key $ca.pem $server.key $server.ext $server.cert ; do
+    for file in $ca.key $ca.pem $server.key $server.cert ; do
 
         if [ -f $file ]; then
             echo $file already exists and overwrite is not set
@@ -100,51 +119,62 @@ if [ $overwrite -eq 0 ] ; then
     done
 fi
 
-# 1 make the CA key
+if [ -z "$common_name" ]; then
+    common_name="Self CA for${domains}"
+fi
+
+subject="/CN=${common_name}/O=${org}"
+
+# 1 Generate the CA key
 
 openssl genrsa -out $ca.key 2048
 
-# 2 make the CA pem
+# 2 Generate the CA pem
 
-openssl req -x509 -new -nodes -key $ca.key -sha256 -days $days -subj "/CN=${main_domain}" -out $ca.pem
+openssl req -x509 -new -nodes -key $ca.key -sha256 -days $days -subj "$subject" -out $ca.pem
 
-# 3 make the SERVER key
+# 3 Generate the SERVER key
 
 openssl genrsa -out $server.key 2048
 
-# 4 make the SERVER CSR
+# 4 Generate the SERVER CSR
 
-openssl req -new -key $server.key -subj "/CN=${main_domain}" -out $server.csr
+openssl req -new -key $server.key -subj "$subject" -out $server.csr
 
-# 5 make the SERVER extensions file
+# 5 Create the extensions file
 
-cat > $server.ext << EOF
-authorityKeyIdentifier=keyid,issuer
-basicConstraints=CA:FALSE
+extfile=$(mktemp)
+
+cat > $extfile << EOF
+authorityKeyIdentifier = keyid, issuer
+basicConstraints = CA:FALSE
 keyUsage = digitalSignature, nonRepudiation, keyEncipherment, dataEncipherment
 subjectAltName = @alt_names
 
 [alt_names]
 EOF
 
-# 6 add the domains to the extensions file
+# 6 Add the domains to the extensions file
 
 let entry=1
 for domain in $domains ; do
 
-    echo "DNS.${entry} = ${domain}" >> $server.ext
+    echo "DNS.${entry} = ${domain}" >> $extfile
     let entry++
+
 done
 
-# 7 make the SERVER cert
+# 7 Generate the SERVER cert
 
 openssl x509 -req -in $server.csr -CA $ca.pem -CAkey $ca.key -CAcreateserial \
-             -out $server.cert -days $days -sha256 -extfile $server.ext
+             -out $server.cert -days $days -sha256 -extfile $extfile
+             
+rm $extfile             
 
-echo ============================================================
+echo ================================================================================
 echo $server.key is the server key to be used in the server
 echo $server.cert is the server cert to be used in the server
-echo $ca.pem is the CA authority to be used in the browser, etc
-echo ============================================================
-echo For development purposes, $ca.key and $server.srl can be ignored
+echo $ca.pem is the CA authority cert to be imported into the browser, keychain etc
+echo ================================================================================
+echo For development purposes, $ca.key, $server.csr and $server.srl can be ignored
 
